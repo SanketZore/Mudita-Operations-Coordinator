@@ -10,9 +10,9 @@ import { createLLM } from './llm/index.js';
 import { createOrchestrator } from './core/orchestrator.js';
 import { createApp } from './routes.js';
 
-const HOST = '127.0.0.1';
+const HOST = process.env.HOST || '0.0.0.0';
 
-export function findAvailablePort(startPort, maxAttempts = 20, host = '127.0.0.1') {
+export function findAvailablePort(startPort, maxAttempts = 20, host = HOST) {
   return new Promise((resolve, reject) => {
     const tryPort = (port, attempts) => {
       const server = net.createServer();
@@ -51,14 +51,19 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const status = llmStatus(config);
 
   const startServer = async () => {
-    const port = await findAvailablePort(config.port, 20, HOST).catch((err) => {
-      console.error(`Unable to bind to port ${config.port}: ${err.message}`);
-      process.exit(1);
-    });
+    const requestedPort = Number(process.env.PORT || config.port);
+    const port = process.env.PORT
+      ? requestedPort
+      : await findAvailablePort(config.port, 20, HOST).catch((err) => {
+          console.error(`Unable to bind to port ${config.port}: ${err.message}`);
+          process.exit(1);
+        });
 
-    if (port !== config.port) {
+    if (!process.env.PORT && port !== config.port) {
       console.warn(`Port ${config.port} is busy; starting on ${port} instead.`);
       config.port = port;
+    } else {
+      config.port = requestedPort;
     }
 
     app.listen(config.port, HOST, () => {
