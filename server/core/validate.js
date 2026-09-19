@@ -4,36 +4,73 @@ import Ajv from 'ajv';
 const ajv = new Ajv({ allErrors: true, strict: false });
 const cache = new WeakMap();
 
+const ENUM_ALIASES = {
+  approve: new Set(['approve', 'approved', 'accept', 'accepted', 'pass', 'passed', 'ok']),
+  revise: new Set(['revise', 'revised', 'revision', 'needs_revision', 'needs_revise', 'reject', 'rejected', 'fix', 'fixes', 'change_requested']),
+};
+
+function buildEnumVariants(value) {
+  const text = String(value).trim();
+  if (!text) return new Set();
+  const lower = text.toLowerCase();
+  return new Set([
+    text,
+    lower,
+    lower.replace(/[-\s]+/g, '_'),
+    lower.replace(/_/g, '-'),
+    lower.replace(/_/g, ' '),
+    lower.replace(/\s+/g, ''),
+    lower.replace(/[_-]+/g, ''),
+  ]);
+}
+
 function normalizeEnumValue(value, allowed) {
   if (typeof value !== 'string') return value;
   const raw = value.trim();
   if (!raw) return value;
-  const variants = new Set([
-    raw,
-    raw.toLowerCase(),
-    raw.toLowerCase().replace(/[-\s]+/g, '_'),
-    raw.toLowerCase().replace(/_/g, '-'),
-    raw.toLowerCase().replace(/_/g, ' '),
-  ]);
+  const rawVariants = buildEnumVariants(raw);
+
+  const aliasMap = new Map();
+  for (const [canonical, aliases] of Object.entries(ENUM_ALIASES)) {
+    const canonicalVariants = buildEnumVariants(canonical);
+    for (const alias of aliases) {
+      for (const variant of buildEnumVariants(alias)) aliasMap.set(variant, canonical);
+      for (const variant of canonicalVariants) aliasMap.set(variant, canonical);
+    }
+  }
+
+  for (const variant of rawVariants) {
+    if (aliasMap.has(variant)) return aliasMap.get(variant);
+  }
+
   for (const allowedValue of allowed) {
     const candidate = String(allowedValue).trim();
-    const candidateVariants = new Set([
-      candidate,
-      candidate.toLowerCase(),
-      candidate.toLowerCase().replace(/[-\s]+/g, '_'),
-      candidate.toLowerCase().replace(/_/g, '-'),
-      candidate.toLowerCase().replace(/_/g, ' '),
-    ]);
-    if ([...variants].some((v) => candidateVariants.has(v))) return candidate;
+    if (!candidate) continue;
+    const candidateVariants = buildEnumVariants(candidate);
+    if ([...rawVariants].some((v) => candidateVariants.has(v))) return candidate;
   }
   return value;
+}
+
+function getEnumSchemaValues(schema) {
+  const enums = [];
+  if (Array.isArray(schema?.enum)) enums.push(...schema.enum);
+  for (const unionKey of ['anyOf', 'oneOf', 'allOf']) {
+    if (Array.isArray(schema?.[unionKey])) {
+      for (const child of schema[unionKey]) {
+        if (Array.isArray(child?.enum)) enums.push(...child.enum);
+      }
+    }
+  }
+  return enums;
 }
 
 export function normalizeStructuredOutput(schema, data) {
   if (data === null || data === undefined) return data;
 
-  if (Array.isArray(schema?.enum) && typeof data === 'string') {
-    return normalizeEnumValue(data, schema.enum);
+  const enumValues = getEnumSchemaValues(schema);
+  if (enumValues.length && typeof data === 'string') {
+    return normalizeEnumValue(data, enumValues);
   }
 
   if (Array.isArray(data)) {

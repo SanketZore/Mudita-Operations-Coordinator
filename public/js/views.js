@@ -92,7 +92,15 @@ function taskCard(run, t) {
 
 export function planTab(run, ui) {
   const res = run.result;
-  if (!res) return `<div class="empty">${run.is_running ? 'The agents are working. The plan appears here as soon as the Review Agent has checked it.' : run.status === 'failed' ? 'The run stopped before a plan was produced. Press Resume to continue from the last finished step.' : 'No plan yet.'}</div>`;
+  if (!res) {
+    if (run.is_running) {
+      return `<div class="empty" role="status" aria-live="polite" style="text-align:left">
+        <div class="row" style="gap:.7rem;margin-bottom:.9rem"><span class="loading-spinner" style="width:1.3rem;height:1.3rem"></span><b>${esc(activeLabel(run))}</b></div>
+        <div class="skeleton">${[0, 1, 2].map(() => '<div class="sk-card"><div class="sk title"></div><div class="sk line"></div><div class="sk line short"></div></div>').join('')}</div>
+        <p class="small muted" style="margin-top:.9rem">The plan appears here as soon as the Review Agent has checked it.</p></div>`;
+    }
+    return `<div class="empty">${run.status === 'failed' ? 'The run stopped before a plan was produced. Press Resume to continue from the last finished step.' : 'No plan yet.'}</div>`;
+  }
   const plan = res.final_plan;
   const ok = res.status === 'approved';
   const supported = plan.tasks.filter((t) => t.kind === 'supported');
@@ -259,15 +267,34 @@ export function demoTab(run, ui, health) {
   </div>`;
 }
 
+/** Wording for the current stage of a running run. Read-only; drives no logic. */
+const WORKING = {
+  intake: 'Intake Agent is reading the transcript and extracting facts…',
+  planning: 'Planning Agent is turning facts and rules into tasks…',
+  review: 'Review Agent is auditing the plan against the source…',
+};
+function activeLabel(run) {
+  const live = Object.values(run?.steps || {}).find((s) => s.status === 'running');
+  return live ? WORKING[live.agent] || 'Agents are working…' : 'Agents are working through the review loop…';
+}
+
 /* -------------------------------------------------------------- shell -- */
 export function runHeader(run) {
   const st = run.is_running ? 'running' : run.status;
   const label = { running: 'Running', completed: 'Completed', failed: 'Stopped by an error', interrupted: 'Interrupted by a server restart', needs_review: 'Needs human review', created: 'Ready' }[st] || st;
   const canStop = run.is_running;
   const canResume = ['failed', 'interrupted', 'created'].includes(run.status) && !run.is_running;
+  const steps = Object.values(run.steps || {});
+  const done = steps.filter((s) => ['succeeded', 'failed', 'stale'].includes(s.status)).length;
+  const progress = run.is_running ? Math.min(96, Math.max(14, Math.round((done / Math.max(steps.length || 1, 3)) * 100))) : 100;
+  const statusMessage = run.is_running ? activeLabel(run) : run.result?.status === 'approved' ? 'Plan approved and ready to export as a PDF.' : 'Review finished and ready for inspection.';
   return `<div class="runhead"><div><h2>${esc(run.title)}</h2><div class="row"><span class="tag"><i class="dot ${esc(st)}"></i>${esc(label)}</span><span class="small muted">${esc(run.provider.name)}${run.provider.mock ? ' (mock)' : ''} - ${run.usage.calls} model calls - ${num(run.usage.input_tokens + run.usage.output_tokens)} tokens - about ${usd(run.usage.cost_usd)}</span></div>
+    <div class="run-progress-wrap" aria-live="polite">
+      <div class="run-progress-track"><span class="run-progress-bar" style="width:${progress}%"></span></div>
+      <div class="small muted">${esc(statusMessage)}</div>
+    </div>
     ${run.error ? `<div class="finding" style="margin-top:.6rem"><b>${run.error.simulated ? 'SIMULATED failure' : 'Error'}${run.error.step ? ` in ${esc(run.error.step)}` : ''}:</b> ${esc(run.error.message)}<div class="small">Finished steps are saved. Resume continues without repeating them.</div></div>` : ''}</div>
-    <div class="row">${canStop ? '<button class="btn ghost" data-action="stop-run">Stop run</button>' : ''}${canResume ? '<button class="btn" data-action="resume">Resume</button>' : ''}<button class="btn ghost" data-action="delete-run" ${run.is_running ? 'disabled' : ''}>Delete run</button></div></div>`;
+    <div class="row">${canStop ? '<button class="btn ghost" data-action="stop-run">Stop run</button>' : ''}${canResume ? '<button class="btn" data-action="resume">Resume</button>' : ''}<button class="btn ghost" data-action="delete-run" ${run.is_running ? 'disabled' : ''}>Delete run</button><button class="btn ghost" data-action="download-plan-pdf" ${run.result?.final_plan ? '' : 'disabled'}>Download PDF</button></div></div>`;
 }
 
 export function tabs(active) {
@@ -276,8 +303,23 @@ export function tabs(active) {
 }
 
 export function idleRelay() {
-  return `<div class="panel" style="margin-bottom:1rem"><h2>Turn a meeting into a reviewed plan</h2><p class="muted">Three agents pass work along a checked route. Pick a sample on the left and start a run.</p></div>${relay(null, null)}
+  return `<div class="hero panel"><div><p class="eyebrow">AI operations review</p><h2>Turn a meeting into a reviewed plan</h2><p class="muted">Three agents pass work through a validated review loop. Pick a sample on the left and start a run to see the plan emerge live.</p></div><div class="hero-actions"><button class="btn" data-action="demo-complete">Try a full run</button></div></div>${relay(null, null)}
     <div class="guardbar"><b>Code checks (no model involved)</b> verify every quote exists in the transcript, every owner is on the roster, dates fall on weekdays and dependencies have no cycles. The approve/revise verdict is decided in code.</div>`;
+}
+
+/** A placeholder shaped like the real relay, so nothing jumps when content arrives. */
+function skeletonRelay() {
+  return `<div class="sk-relay" aria-hidden="true">${AGENTS.map(() => `<div class="sk-card">
+      <div class="sk title"></div><div class="sk line"></div><div class="sk line short"></div>
+      <div class="chips"><span class="sk chip"></span><span class="sk chip"></span></div>
+    </div>`).join('')}</div>`;
+}
+
+export function loadingShell({ title, description }) {
+  return `<div class="loading-shell panel" role="status" aria-live="polite"><div class="loading-spinner" aria-hidden="true"></div>
+    <div><h2>${esc(title)}</h2><p class="muted">${esc(description)}</p><div class="mini-progress" aria-hidden="true"><span></span></div></div></div>
+    ${skeletonRelay()}
+    <div class="sk-card" aria-hidden="true"><div class="sk title"></div><div class="sk line"></div><div class="sk line"></div><div class="sk line short"></div></div>`;
 }
 
 export function railNew(state) {

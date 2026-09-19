@@ -129,7 +129,7 @@ test('0c. LLM enum drift is normalized before validation so review verdict/categ
   };
 
   const input = {
-    verdict: 'APPROVE',
+    verdict: 'APPROVED',
     findings: [{
       severity: 'BLOCKER',
       category: 'invented-owner',
@@ -148,6 +148,22 @@ test('0c. LLM enum drift is normalized before validation so review verdict/categ
   assert.equal(normalized.findings[0].severity, 'blocker');
   assert.equal(normalized.findings[0].category, 'invented_owner');
   assert.equal(normalized.findings[0].task_id, null);
+
+  const reviseInput = {
+    verdict: 'needs_revision',
+    findings: [{
+      severity: 'MAJOR',
+      category: 'unsupported_claim',
+      task_id: null,
+      description: 'The plan assumes a missing fact.',
+      evidence: 'The transcript never mentions it.',
+      rule_ids: ['R3'],
+      fact_ids: [],
+      required_correction: 'Add the missing evidence before finishing.',
+    }],
+    checks_performed: ['checked the transcript'],
+  };
+  assert.equal(normalizeStructuredOutput(schema, reviseInput).verdict, 'revise');
 });
 
 test('1. complete three-agent run: all agents run, handoffs are validated, plan approved', async () => {

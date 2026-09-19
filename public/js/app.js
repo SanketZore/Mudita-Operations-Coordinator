@@ -5,10 +5,11 @@
  */
 import { api, ApiFailure } from './api.js';
 import { esc, usd, shiftToWeekday } from './util.js';
+import { downloadPlanPdf } from './pdf.js';
 import * as V from './views.js';
 
 const $ = (id) => document.getElementById(id);
-const state = { health: null, samples: [], sampleId: null, runs: [], runId: null, run: null, tab: 'plan', ui: { step: null, lines: [], editing: null, answering: null, editSource: false, isolation: null } };
+const state = { health: null, samples: [], sampleId: null, runs: [], runId: null, run: null, tab: 'plan', ui: { step: null, lines: [], editing: null, answering: null, editSource: false, isolation: null, loading: null } };
 let timer = null;
 let lastStamp = '';
 
@@ -51,6 +52,10 @@ function renderRail() {
 }
 
 function renderMain() {
+  if (state.ui.loading && !state.run) {
+    $('main').innerHTML = V.loadingShell({ title: state.ui.loading.title || 'Loading workspace', description: state.ui.loading.description || 'Preparing agent context…' });
+    return;
+  }
   const run = state.run;
   if (!run) {
     $('main').innerHTML = V.idleRelay();
@@ -110,12 +115,15 @@ function sourceFromForm() {
   return { title: $('f-title').value, meeting_date: $('f-date').value || null, transcript: $('f-transcript').value, rules_text: $('f-rules').value, roster_text: $('f-roster').value };
 }
 async function startRun(extraFaults = [], extra = {}) {
+  state.ui.loading = { title: 'Starting the review run', description: 'The intake, planning and review agents are now processing your data…' };
+  renderMain();
   const payload = { ...sourceFromForm(), ...extra };
   const faults = [...extraFaults];
   if ($('x-violation')?.checked) faults.push({ kind: 'planner_violation' });
   if ($('x-fail')?.checked) faults.push({ kind: 'model_error', agent: $('x-fail-agent').value });
   const run = await guard(() => api.createRun({ ...payload, faults }));
-  if (run) { state.tab = 'plan'; state.ui.step = null; await afterMutation(run); }
+  if (run) { state.tab = 'plan'; state.ui.step = null; state.ui.loading = null; await afterMutation(run); }
+  else { state.ui.loading = null; renderMain(); }
 }
 function selectSample(id) {
   const s = state.samples.find((x) => x.id === id);
@@ -141,6 +149,12 @@ const actions = {
   'delete-run': async () => {
     if (!confirm('Delete this run and everything it produced?')) return;
     if (await guard(() => api.deleteRun(state.runId))) { state.run = null; state.runId = null; await refreshRuns(); renderAll(); }
+  },
+  'download-plan-pdf': () => {
+    if (!state.run?.result?.final_plan) return toast('The plan is not ready to export yet.', true);
+    const ok = downloadPlanPdf(state.run);
+    if (!ok) toast('The browser blocked the PDF window. Please allow pop-ups and try again.', true);
+    else toast('Opening the print dialog to save as PDF…');
   },
   reset: async () => {
     if (!confirm('Delete ALL runs in this workspace? This cannot be undone.')) return;
@@ -217,20 +231,40 @@ document.addEventListener('click', (e) => {
 });
 document.addEventListener('change', (e) => { if (e.target.name === 'sample') selectSample(e.target.value); });
 
+/* ---------------------------------------------------------------- layout -- */
+/* The header wraps at narrow widths, so measure it instead of guessing. Purely
+   visual: it keeps the sticky rail from sliding underneath the header. */
+function trackHeaderHeight() {
+  const top = document.querySelector('.top');
+  if (!top) return;
+  const apply = () => document.documentElement.style.setProperty('--top-h', `${Math.round(top.getBoundingClientRect().height)}px`);
+  apply();
+  // the header grows when the web font swaps in and when it wraps, so re-measure
+  document.fonts?.ready.then(apply).catch(() => {});
+  addEventListener('load', apply, { once: true });
+  if (typeof ResizeObserver === 'function') new ResizeObserver(apply).observe(top);
+  else addEventListener('resize', apply);
+}
+trackHeaderHeight();
+
 /* ----------------------------------------------------------------- init -- */
 async function init() {
   try {
+    state.ui.loading = { title: 'Loading workspace', description: 'Checking the model and loading sample data…' };
+    renderMain();
     state.health = await api.health();
     if (state.health.access_required && !state.health.authorized) { renderChrome(); return renderGate(); }
     state.samples = (await api.samples()) || [];
     state.sampleId ||= state.samples[0]?.id;
     await refreshRuns();
     state.sampleChanged = true;
+    state.ui.loading = null;
     renderAll();
     // reopen a run that is still executing (e.g. after a page refresh)
     const live = state.runs.find((r) => r.is_running) || state.runs[0];
     if (live) { await loadRun(live.id); renderAll(); }
   } catch (e) {
+    state.ui.loading = null;
     $('main').innerHTML = `<div class="panel"><h3>Cannot load the app</h3><p>${esc(e.message)}</p></div>`;
   }
 }
