@@ -1,0 +1,9 @@
+{
+  "name": "Weekly ops sync (small, cheap)",
+  "description": "Five lines - a fast, low-cost run for trying the controls.",
+  "title": "Weekly ops sync",
+  "meeting_date": "2026-09-21",
+  "transcript": "Meeting: Weekly ops sync, 2026-09-21\nAlice Archer (Ops): We decided to move the vendor review to September 24.\nAlice Archer: I'll send the corrected invoice to Finance by September 23.\nBen Carter (Finance): We need the corrected invoice before we can approve the payment.\nBen Carter: Constraint: payments over $10,000 need a second approver.\nAlice Archer: Nobody has been assigned to update the vendor contract yet.",
+  "rules_text": "R1: Every task needs one owner from the roster, or must stay unassigned with an open question. Never invent an owner.\nR2: Deadlines are facts only if stated in the meeting; any proposed date is a recommendation citing a rule.\nR3: Deadlines must not fall on a weekend or before the meeting date.\nR4: Missing or conflicting information must be listed as an unresolved question.",
+  "roster_text": "Alice Archer - Operations Lead\nBen Carter - Finance Manager\nChloe Diaz - Procurement"
+}

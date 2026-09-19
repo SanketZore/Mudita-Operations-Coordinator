@@ -1,0 +1,9 @@
+node_modules/
+.env
+data/*
+!data/.gitkeep
+*.log
+.node_modules
+.env.example
+credentials.json
+get_calendar_token.py
