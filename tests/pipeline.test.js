@@ -12,6 +12,7 @@ import { truncateTranscriptForModel } from '../server/core/text.js';
 import { createLLM } from '../server/llm/index.js';
 import { callGemini } from '../server/llm/gemini.js';
 import { readConfig } from '../server/config.js';
+import { normalizeStructuredOutput } from '../server/core/validate.js';
 
 test('0. long transcripts are shortened before the model prompt is built', () => {
   const lines = Array.from({ length: 400 }, (_, i) => ({ line: i + 1, text: `Alice: We need to ship item ${i} and keep this line very long so the model sees a large transcript. ${'more text '.repeat(20)}` }));
@@ -96,6 +97,57 @@ test('0b. Groq quota failure falls back to Gemini automatically', async () => {
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test('0c. LLM enum drift is normalized before validation so review verdict/category values stay schema-safe', () => {
+  const schema = {
+    type: 'object',
+    additionalProperties: false,
+    required: ['verdict', 'findings', 'checks_performed'],
+    properties: {
+      verdict: { enum: ['approve', 'revise'] },
+      findings: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['severity', 'category', 'task_id', 'description', 'evidence', 'rule_ids', 'fact_ids', 'required_correction'],
+          properties: {
+            severity: { enum: ['blocker', 'major', 'minor'] },
+            category: { enum: ['rule_violation', 'unsupported_claim', 'invented_owner', 'invented_deadline', 'dependency', 'missing_coverage', 'other'] },
+            task_id: { type: ['string', 'null'] },
+            description: { type: 'string' },
+            evidence: { type: 'string' },
+            rule_ids: { type: 'array', items: { type: 'string' } },
+            fact_ids: { type: 'array', items: { type: 'string' } },
+            required_correction: { type: 'string' },
+          },
+        },
+      },
+      checks_performed: { type: 'array', items: { type: 'string' } },
+    },
+  };
+
+  const input = {
+    verdict: 'APPROVE',
+    findings: [{
+      severity: 'BLOCKER',
+      category: 'invented-owner',
+      task_id: '',
+      description: 'Task owner was invented',
+      evidence: 'The transcript never names that owner.',
+      rule_ids: [],
+      fact_ids: [],
+      required_correction: 'Set owner to null and ask the user',
+    }],
+    checks_performed: ['verified the transcript'],
+  };
+
+  const normalized = normalizeStructuredOutput(schema, input);
+  assert.equal(normalized.verdict, 'approve');
+  assert.equal(normalized.findings[0].severity, 'blocker');
+  assert.equal(normalized.findings[0].category, 'invented_owner');
+  assert.equal(normalized.findings[0].task_id, null);
 });
 
 test('1. complete three-agent run: all agents run, handoffs are validated, plan approved', async () => {

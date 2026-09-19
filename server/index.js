@@ -52,12 +52,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 
   const startServer = async () => {
     const requestedPort = Number(process.env.PORT || config.port);
-    const port = process.env.PORT
-      ? requestedPort
-      : await findAvailablePort(config.port, 20, HOST).catch((err) => {
-          console.error(`Unable to bind to port ${config.port}: ${err.message}`);
-          process.exit(1);
-        });
+    const preferredPort = process.env.PORT ? requestedPort : config.port;
+    let port = process.env.PORT ? requestedPort : await findAvailablePort(config.port, 20, HOST).catch((err) => {
+      console.error(`Unable to bind to port ${config.port}: ${err.message}`);
+      process.exit(1);
+    });
 
     if (!process.env.PORT && port !== config.port) {
       console.warn(`Port ${config.port} is busy; starting on ${port} instead.`);
@@ -66,14 +65,29 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       config.port = requestedPort;
     }
 
-    app.listen(config.port, HOST, () => {
-      console.log(`Ops Coordinator listening on http://${HOST}:${config.port}`);
-      console.log(`LLM provider: ${config.provider} | models: intake=${config.models.intake} planning=${config.models.planning} review=${config.models.review}`);
-      if (!status.ready) console.warn(`WARNING: ${status.reason}`);
-      if (config.provider === 'mock') console.warn('WARNING: LLM_PROVIDER=mock - outputs are NOT from a real language model.');
-      if (recovered) console.log(`Recovered ${recovered} interrupted run(s) - users can press Resume.`);
-      if (pruned) console.log(`Pruned ${pruned} old session(s).`);
-    });
+    const tryListen = (bindPort) => {
+      const server = app.listen(bindPort, HOST, () => {
+        console.log(`Ops Coordinator listening on http://${HOST}:${bindPort}`);
+        console.log(`LLM provider: ${config.provider} | models: intake=${config.models.intake} planning=${config.models.planning} review=${config.models.review}`);
+        if (!status.ready) console.warn(`WARNING: ${status.reason}`);
+        if (config.provider === 'mock') console.warn('WARNING: LLM_PROVIDER=mock - outputs are NOT from a real language model.');
+        if (recovered) console.log(`Recovered ${recovered} interrupted run(s) - users can press Resume.`);
+        if (pruned) console.log(`Pruned ${pruned} old session(s).`);
+      });
+
+      server.on('error', (err) => {
+        if (err.code === 'EADDRINUSE') {
+          const nextPort = bindPort + 1;
+          console.warn(`Port ${bindPort} is busy; retrying on ${nextPort} instead.`);
+          tryListen(nextPort);
+          return;
+        }
+        console.error(`Fatal server error on port ${bindPort}: ${err.message}`);
+        process.exit(1);
+      });
+    };
+
+    tryListen(config.port);
   };
 
   startServer();
